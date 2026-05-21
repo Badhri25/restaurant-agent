@@ -62,7 +62,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=lk_assemblyai.STT(),
         llm=lk_groq.LLM(model="llama-3.3-70b-versatile"),
-        tts=lk_cartesia.TTS(speed="slow"),
+        tts=lk_cartesia.TTS(),
         vad=vad,
         turn_detection=MultilingualModel(),
     )

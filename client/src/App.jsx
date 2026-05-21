@@ -1,29 +1,56 @@
 import { useState, useEffect, useRef } from 'react'
-import { Room, RoomEvent, createLocalAudioTrack, Track } from 'livekit-client'
+import { Room, RoomEvent, createLocalAudioTrack, Track, ParticipantEvent } from 'livekit-client'
 
 export default function App() {
   const [status, setStatus] = useState('idle')
+  const [agentSpeaking, setAgentSpeaking] = useState(false)
+  const [callDuration, setCallDuration] = useState(0)
   const roomRef = useRef(null)
+  const timerRef = useRef(null)
+
+  // call timer
+  useEffect(() => {
+    if (status === 'connected') {
+      timerRef.current = setInterval(() => {
+        setCallDuration(prev => prev + 1)
+      }, 1000)
+    } else {
+      clearInterval(timerRef.current)
+      setCallDuration(0)
+    }
+    return () => clearInterval(timerRef.current)
+  }, [status])
+
+  function formatTime(seconds) {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0')
+    const s = (seconds % 60).toString().padStart(2, '0')
+    return `${m}:${s}`
+  }
 
   async function startCall() {
     setStatus('connecting')
     try {
-      // create a FRESH room every time
       const room = new Room()
       roomRef.current = room
 
-      // play agent audio when it arrives
-      room.on(RoomEvent.TrackSubscribed, (track) => {
+      // detect agent speaking
+      room.on(RoomEvent.TrackSubscribed, (track, _, participant) => {
         if (track.kind === Track.Kind.Audio) {
           const audioEl = track.attach()
           audioEl.autoplay = true
           document.body.appendChild(audioEl)
+
+          // listen for speaking events on the agent participant
+          participant.on(ParticipantEvent.IsSpeakingChanged, (speaking) => {
+            setAgentSpeaking(speaking)
+          })
         }
       })
 
       room.on(RoomEvent.Connected, () => setStatus('connected'))
       room.on(RoomEvent.Disconnected, () => {
         setStatus('idle')
+        setAgentSpeaking(false)
         roomRef.current = null
       })
 
@@ -76,7 +103,23 @@ export default function App() {
 
         {status === 'connected' && (
           <>
-            <p style={styles.hint}>Speak now — the agent is listening</p>
+            {/* call timer */}
+            <div style={styles.timerBox}>
+              <span style={styles.timerText}>{formatTime(callDuration)}</span>
+            </div>
+
+            {/* speaking indicator */}
+            <div style={styles.speakingBox}>
+              <div style={{
+                ...styles.speakingDot,
+                background: agentSpeaking ? '#1D9E75' : '#ddd',
+                boxShadow: agentSpeaking ? '0 0 8px #1D9E75' : 'none',
+              }} />
+              <span style={styles.speakingText}>
+                {agentSpeaking ? 'Priya is speaking...' : 'Listening...'}
+              </span>
+            </div>
+
             <button style={styles.btn('#E24B4A')} onClick={endCall}>
               End Call
             </button>
@@ -142,10 +185,38 @@ const styles = {
     fontSize: 14,
     color: '#5F5E5A',
   },
-  hint: {
-    fontSize: 13,
-    color: '#888',
+  timerBox: {
+    background: '#f5f5f3',
+    borderRadius: 8,
+    padding: '8px 16px',
     marginBottom: 16,
+    display: 'inline-block',
+  },
+  timerText: {
+    fontSize: 20,
+    fontWeight: 600,
+    color: '#1a1a1a',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  speakingBox: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 20,
+    padding: '10px 16px',
+    borderRadius: 8,
+    background: '#f9f9f8',
+  },
+  speakingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
+    transition: 'all 0.3s ease',
+  },
+  speakingText: {
+    fontSize: 14,
+    color: '#5F5E5A',
   },
   btn: (bg) => ({
     background: bg,

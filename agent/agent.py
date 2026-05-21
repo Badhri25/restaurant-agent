@@ -39,8 +39,11 @@ Your job:
 3. Take their order carefully, repeat back each item as they order
 4. When they are done, read back the FULL order with quantities and total price
 5. Ask "Anything else I can help you with?" before saying goodbye
-6. Only say goodbye AFTER the customer says bye first
-7. Never end the call on your own
+6. After confirming the order and total price, say exactly this:
+   "Thank you for ordering with Peppers Family Restaurant! Your order has been placed successfully. Please check your inbox for the order confirmation and tracking details. Have a great day!"
+   Then say goodbye warmly.
+7. Only say this message ONCE after the order is confirmed.
+
 
 Fallback rules:
 - If someone asks for something NOT on the menu, say "Sorry, we don't have that today" and suggest the closest item
@@ -59,7 +62,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=lk_assemblyai.STT(),
         llm=lk_groq.LLM(model="llama-3.3-70b-versatile"),
-        tts=lk_cartesia.TTS(),
+        tts=lk_cartesia.TTS(speed="slow"),
         vad=vad,
         turn_detection=MultilingualModel(),
     )

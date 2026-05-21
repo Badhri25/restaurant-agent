@@ -117,8 +117,9 @@ const styles = {
   },
   title: {
     fontSize: 24,
-    fontWeight: 500,
+    fontWeight: 700,
     margin: '0 0 4px',
+    color: '#1a1a1a',
   },
   subtitle: {
     fontSize: 14,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Room, RoomEvent, createLocalAudioTrack, Track, ParticipantEvent } from 'livekit-client'
 
 export default function App() {
@@ -37,14 +37,6 @@ export default function App() {
     audioElemsRef.current = []
   }
 
-  const resetToIdle = useCallback(() => {
-    cleanupAudio()
-    setStatus('idle')
-    setAgentSpeaking(false)
-    setCallDuration(0)
-    roomRef.current = null
-  }, [])
-
   async function startCall() {
     setStatus('connecting')
     try {
@@ -68,9 +60,14 @@ export default function App() {
         setStatus('connected')
       })
 
-      // This fires when server calls room.disconnect()
       room.on(RoomEvent.Disconnected, () => {
-        resetToIdle()
+        console.log('[Room] Disconnected — resetting UI')
+        cleanupAudio()
+        roomRef.current = null
+        // Force state updates
+        setStatus('idle')
+        setAgentSpeaking(false)
+        setCallDuration(0)
       })
 
       const res = await fetch(`${import.meta.env.VITE_TOKEN_SERVER_URL}/token`, {
@@ -92,10 +89,15 @@ export default function App() {
   }
 
   async function endCall() {
-    if (roomRef.current) {
-      await roomRef.current.disconnect()
+    const room = roomRef.current
+    roomRef.current = null
+    cleanupAudio()
+    setStatus('idle')
+    setAgentSpeaking(false)
+    setCallDuration(0)
+    if (room) {
+      await room.disconnect()
     }
-    resetToIdle()
   }
 
   return (

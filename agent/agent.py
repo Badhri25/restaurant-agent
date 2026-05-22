@@ -70,7 +70,7 @@ Fallback rules:
         Waits for speech to finish then disconnects the call cleanly.
         """
         logging.info("end_call triggered — waiting for TTS to finish")
-        await asyncio.sleep(10)
+        await asyncio.sleep(12)
         logging.info("disconnecting room now")
         try:
             await self._room.disconnect()

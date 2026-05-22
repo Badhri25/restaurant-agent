@@ -20,13 +20,16 @@ useEffect(() => {
     }, 1000)
 
     // poll room connection every 2 seconds
-    checker = setInterval(() => {
-      const room = roomRef.current
-      if (!room || room.state === 'disconnected') {
-        console.log('[Checker] Room disconnected — resetting UI')
-        resetUI()
-      }
-    }, 2000)
+  checker = setInterval(() => {
+  const room = roomRef.current
+  if (!room) return
+  const state = room.state
+  console.log('[Checker] room state:', state)
+  if (state === 'disconnected' || state === 'reconnecting' || state === 'failed') {
+    console.log('[Checker] Room gone — resetting UI')
+    resetUI()
+  }
+}, 2000)
   } else {
     setCallDuration(0)
   }

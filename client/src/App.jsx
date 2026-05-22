@@ -1,14 +1,29 @@
 import { useState, useEffect, useRef } from 'react'
 import { Room, RoomEvent, createLocalAudioTrack, Track, ParticipantEvent } from 'livekit-client'
 
+const GOODBYE_PHRASES = [
+  'have a great day',
+  'goodbye',
+  'good bye',
+  'take care',
+  'thank you for ordering',
+  'order has been placed successfully',
+]
+
+function containsGoodbye(text = '') {
+  const lower = text.toLowerCase()
+  return GOODBYE_PHRASES.some(phrase => lower.includes(phrase))
+}
+
 export default function App() {
   const [status, setStatus] = useState('idle')
   const [agentSpeaking, setAgentSpeaking] = useState(false)
   const [callDuration, setCallDuration] = useState(0)
   const roomRef = useRef(null)
   const timerRef = useRef(null)
+  const audioElemsRef = useRef([])
+  const autoDisconnectTimer = useRef(null)
 
-  // call timer
   useEffect(() => {
     if (status === 'connected') {
       timerRef.current = setInterval(() => {
@@ -27,28 +42,64 @@ export default function App() {
     return `${m}:${s}`
   }
 
+  function cleanupAudio() {
+    audioElemsRef.current.forEach(el => {
+      el.pause()
+      el.srcObject = null
+      if (el.parentNode) el.parentNode.removeChild(el)
+    })
+    audioElemsRef.current = []
+  }
+
+  function scheduleAutoDisconnect() {
+    if (autoDisconnectTimer.current) return
+    console.log('[AutoDisconnect] Goodbye detected — disconnecting in 3s')
+    autoDisconnectTimer.current = setTimeout(async () => {
+      autoDisconnectTimer.current = null
+      if (roomRef.current) {
+        await roomRef.current.disconnect()
+      }
+      setStatus('idle')
+    }, 3000)
+  }
+
   async function startCall() {
     setStatus('connecting')
     try {
       const room = new Room()
       roomRef.current = room
 
-      // detect agent speaking
       room.on(RoomEvent.TrackSubscribed, (track, _, participant) => {
         if (track.kind === Track.Kind.Audio) {
           const audioEl = track.attach()
           audioEl.autoplay = true
           document.body.appendChild(audioEl)
+          audioElemsRef.current.push(audioEl)
 
-          // listen for speaking events on the agent participant
           participant.on(ParticipantEvent.IsSpeakingChanged, (speaking) => {
             setAgentSpeaking(speaking)
           })
         }
       })
 
+      room.on(RoomEvent.DataReceived, (payload) => {
+        try {
+          const text = new TextDecoder().decode(payload)
+          const msg = JSON.parse(text)
+          const content = msg?.text || msg?.message || msg?.transcript || ''
+          if (containsGoodbye(content)) {
+            scheduleAutoDisconnect()
+          }
+        } catch {
+          // ignore non-JSON data messages
+        }
+      })
+
       room.on(RoomEvent.Connected, () => setStatus('connected'))
       room.on(RoomEvent.Disconnected, () => {
+        clearTimeout(autoDisconnectTimer.current)
+        autoDisconnectTimer.current = null
+        cleanupAudio()
         setStatus('idle')
         setAgentSpeaking(false)
         roomRef.current = null
@@ -67,14 +118,18 @@ export default function App() {
 
     } catch (e) {
       console.error(e)
+      cleanupAudio()
       setStatus('idle')
     }
   }
 
   async function endCall() {
+    clearTimeout(autoDisconnectTimer.current)
+    autoDisconnectTimer.current = null
     if (roomRef.current) {
       await roomRef.current.disconnect()
     }
+    cleanupAudio()
     setStatus('idle')
   }
 
@@ -103,12 +158,10 @@ export default function App() {
 
         {status === 'connected' && (
           <>
-            {/* call timer */}
             <div style={styles.timerBox}>
               <span style={styles.timerText}>{formatTime(callDuration)}</span>
             </div>
 
-            {/* speaking indicator */}
             <div style={styles.speakingBox}>
               <div style={{
                 ...styles.speakingDot,

@@ -9,17 +9,33 @@ export default function App() {
   const timerRef = useRef(null)
   const audioElemsRef = useRef([])
 
-  useEffect(() => {
-    if (status === 'connected') {
-      timerRef.current = setInterval(() => {
-        setCallDuration(prev => prev + 1)
-      }, 1000)
-    } else {
-      clearInterval(timerRef.current)
-      setCallDuration(0)
-    }
-    return () => clearInterval(timerRef.current)
-  }, [status])
+useEffect(() => {
+  let timer = null
+  let checker = null
+
+  if (status === 'connected') {
+    // call timer
+    timer = setInterval(() => {
+      setCallDuration(prev => prev + 1)
+    }, 1000)
+
+    // poll room connection every 2 seconds
+    checker = setInterval(() => {
+      const room = roomRef.current
+      if (!room || room.state === 'disconnected') {
+        console.log('[Checker] Room disconnected — resetting UI')
+        resetUI()
+      }
+    }, 2000)
+  } else {
+    setCallDuration(0)
+  }
+
+  return () => {
+    clearInterval(timer)
+    clearInterval(checker)
+  }
+}, [status])
 
   function formatTime(seconds) {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0')

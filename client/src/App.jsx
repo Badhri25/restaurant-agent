@@ -19,6 +19,7 @@ export default function App() {
   const [status, setStatus] = useState('idle')
   const [agentSpeaking, setAgentSpeaking] = useState(false)
   const [callDuration, setCallDuration] = useState(0)
+  const [orderDone, setOrderDone] = useState(false)
   const roomRef = useRef(null)
   const timerRef = useRef(null)
   const audioElemsRef = useRef([])
@@ -32,6 +33,7 @@ export default function App() {
     } else {
       clearInterval(timerRef.current)
       setCallDuration(0)
+      setOrderDone(false)
     }
     return () => clearInterval(timerRef.current)
   }, [status])
@@ -46,6 +48,7 @@ export default function App() {
     audioElemsRef.current.forEach(el => {
       el.pause()
       el.srcObject = null
+      el.src = ''
       if (el.parentNode) el.parentNode.removeChild(el)
     })
     audioElemsRef.current = []
@@ -53,14 +56,17 @@ export default function App() {
 
   function scheduleAutoDisconnect() {
     if (autoDisconnectTimer.current) return
-    console.log('[AutoDisconnect] Goodbye detected — disconnecting in 3s')
+    setOrderDone(true)
+    // UI shows "Order placed" status, actual disconnect comes from server
+    // but we also schedule a client-side fallback after 12s just in case
     autoDisconnectTimer.current = setTimeout(async () => {
       autoDisconnectTimer.current = null
+      cleanupAudio()
       if (roomRef.current) {
         await roomRef.current.disconnect()
       }
       setStatus('idle')
-    }, 3000)
+    }, 12000)
   }
 
   async function startCall() {
@@ -91,17 +97,20 @@ export default function App() {
             scheduleAutoDisconnect()
           }
         } catch {
-          // ignore non-JSON data messages
+          // ignore non-JSON
         }
       })
 
       room.on(RoomEvent.Connected, () => setStatus('connected'))
+
+      // This fires when server disconnects the room — reset UI immediately
       room.on(RoomEvent.Disconnected, () => {
         clearTimeout(autoDisconnectTimer.current)
         autoDisconnectTimer.current = null
         cleanupAudio()
         setStatus('idle')
         setAgentSpeaking(false)
+        setOrderDone(false)
         roomRef.current = null
       })
 
@@ -126,10 +135,10 @@ export default function App() {
   async function endCall() {
     clearTimeout(autoDisconnectTimer.current)
     autoDisconnectTimer.current = null
+    cleanupAudio()
     if (roomRef.current) {
       await roomRef.current.disconnect()
     }
-    cleanupAudio()
     setStatus('idle')
   }
 
@@ -140,8 +149,8 @@ export default function App() {
         <p style={styles.subtitle}>Voice Order System</p>
 
         <div style={styles.statusRow}>
-          <div style={{ ...styles.dot, background: dotColor(status) }} />
-          <span style={styles.statusText}>{statusLabel(status)}</span>
+          <div style={{ ...styles.dot, background: dotColor(status, orderDone) }} />
+          <span style={styles.statusText}>{statusLabel(status, orderDone)}</span>
         </div>
 
         {status === 'idle' && (
@@ -162,20 +171,32 @@ export default function App() {
               <span style={styles.timerText}>{formatTime(callDuration)}</span>
             </div>
 
-            <div style={styles.speakingBox}>
-              <div style={{
-                ...styles.speakingDot,
-                background: agentSpeaking ? '#1D9E75' : '#ddd',
-                boxShadow: agentSpeaking ? '0 0 8px #1D9E75' : 'none',
-              }} />
-              <span style={styles.speakingText}>
-                {agentSpeaking ? 'Priya is speaking...' : 'Listening...'}
-              </span>
-            </div>
+            {!orderDone && (
+              <div style={styles.speakingBox}>
+                <div style={{
+                  ...styles.speakingDot,
+                  background: agentSpeaking ? '#1D9E75' : '#ddd',
+                  boxShadow: agentSpeaking ? '0 0 8px #1D9E75' : 'none',
+                }} />
+                <span style={styles.speakingText}>
+                  {agentSpeaking ? 'Priya is speaking...' : 'Listening...'}
+                </span>
+              </div>
+            )}
 
-            <button style={styles.btn('#E24B4A')} onClick={endCall}>
-              End Call
-            </button>
+            {orderDone && (
+              <div style={styles.orderDoneBox}>
+                <span style={styles.orderDoneText}>
+                  ✓ Order placed — ending call...
+                </span>
+              </div>
+            )}
+
+            {!orderDone && (
+              <button style={styles.btn('#E24B4A')} onClick={endCall}>
+                End Call
+              </button>
+            )}
           </>
         )}
       </div>
@@ -183,13 +204,15 @@ export default function App() {
   )
 }
 
-function dotColor(s) {
+function dotColor(s, orderDone) {
+  if (s === 'connected' && orderDone) return '#EF9F27'
   if (s === 'connected') return '#1D9E75'
   if (s === 'connecting') return '#EF9F27'
   return '#B4B2A9'
 }
 
-function statusLabel(s) {
+function statusLabel(s, orderDone) {
+  if (s === 'connected' && orderDone) return 'Order placed — wrapping up...'
   if (s === 'connected') return 'Connected'
   if (s === 'connecting') return 'Connecting...'
   return 'Not connected'
@@ -270,6 +293,18 @@ const styles = {
   speakingText: {
     fontSize: 14,
     color: '#5F5E5A',
+  },
+  orderDoneBox: {
+    background: '#f0faf5',
+    border: '1px solid #b7e4ce',
+    borderRadius: 8,
+    padding: '12px 16px',
+    marginBottom: 20,
+  },
+  orderDoneText: {
+    fontSize: 14,
+    color: '#1D9E75',
+    fontWeight: 500,
   },
   btn: (bg) => ({
     background: bg,

@@ -67,7 +67,11 @@ useEffect(() => {
   async function startCall() {
     setStatus('connecting')
     try {
-      const room = new Room()
+      const room = new Room({
+      reconnectPolicy: {
+      nextRetryDelayInMs: () => null
+       }
+      })
       roomRef.current = room
 
       // set up ALL listeners BEFORE connecting

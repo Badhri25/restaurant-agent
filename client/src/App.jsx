@@ -1,61 +1,48 @@
 import { useState, useEffect, useRef } from 'react'
 import { Room, RoomEvent, createLocalAudioTrack, Track, ParticipantEvent } from 'livekit-client'
 
+const GOLD = '#C9A84C'
+const GOLD_LIGHT = '#E8C96A'
+const DARK_BG = '#0A0A0A'
+const CARD_BG = '#111111'
+const CARD_BORDER = '#2A2A2A'
+const SURFACE = '#1A1A1A'
+
 export default function App() {
   const [status, setStatus] = useState('idle')
   const [agentSpeaking, setAgentSpeaking] = useState(false)
   const [callDuration, setCallDuration] = useState(0)
   const [transcript, setTranscript] = useState([])
   const roomRef = useRef(null)
-  const timerRef = useRef(null)
   const audioElemsRef = useRef([])
   const transcriptEndRef = useRef(null)
 
   useEffect(() => {
     let timer = null
     let checker = null
-
     if (status === 'connected') {
-      timer = setInterval(() => {
-        setCallDuration(prev => prev + 1)
-      }, 1000)
-
+      timer = setInterval(() => setCallDuration(p => p + 1), 1000)
       checker = setInterval(() => {
         const room = roomRef.current
         if (!room) return
-        const state = room.state
-        if (state === 'disconnected' || state === 'failed') {
-          resetUI()
-        }
+        if (room.state === 'disconnected' || room.state === 'failed') resetUI()
       }, 2000)
     } else {
       setCallDuration(0)
     }
-
-    return () => {
-      clearInterval(timer)
-      clearInterval(checker)
-    }
+    return () => { clearInterval(timer); clearInterval(checker) }
   }, [status])
 
-  // auto scroll transcript to bottom
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [transcript])
 
-  function formatTime(seconds) {
-    const m = Math.floor(seconds / 60).toString().padStart(2, '0')
-    const s = (seconds % 60).toString().padStart(2, '0')
-    return `${m}:${s}`
+  function formatTime(s) {
+    return `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`
   }
 
   function cleanupAudio() {
-    audioElemsRef.current.forEach(el => {
-      el.pause()
-      el.srcObject = null
-      el.src = ''
-      if (el.parentNode) el.parentNode.removeChild(el)
-    })
+    audioElemsRef.current.forEach(el => { el.pause(); el.srcObject = null; el.src = ''; if (el.parentNode) el.parentNode.removeChild(el) })
     audioElemsRef.current = []
   }
 
@@ -69,13 +56,10 @@ export default function App() {
   }
 
   function addMessage(role, text) {
-    if (!text || text.trim() === '') return
+    if (!text || !text.trim()) return
     setTranscript(prev => {
-      // if last message is same role and within 2s, append to it
       const last = prev[prev.length - 1]
-      if (last && last.role === role) {
-        return [...prev.slice(0, -1), { ...last, text: last.text + ' ' + text.trim() }]
-      }
+      if (last && last.role === role) return [...prev.slice(0, -1), { ...last, text: last.text + ' ' + text.trim() }]
       return [...prev, { role, text: text.trim(), id: Date.now() + Math.random() }]
     })
   }
@@ -84,34 +68,19 @@ export default function App() {
     setStatus('connecting')
     setTranscript([])
     try {
-      const room = new Room({
-        reconnectPolicy: { nextRetryDelayInMs: () => null }
-      })
+      const room = new Room({ reconnectPolicy: { nextRetryDelayInMs: () => null } })
       roomRef.current = room
-
-      room.on(RoomEvent.Disconnected, (reason) => {
-        console.log('[Room] Disconnected:', reason)
-        setTimeout(() => resetUI(), 500)
-      })
-
-      room.on(RoomEvent.Connected, () => {
-        setStatus('connected')
-      })
-
+      room.on(RoomEvent.Disconnected, () => setTimeout(() => resetUI(), 500))
+      room.on(RoomEvent.Connected, () => setStatus('connected'))
       room.on(RoomEvent.TrackSubscribed, (track, _, participant) => {
         if (track.kind === Track.Kind.Audio) {
-          const audioEl = track.attach()
-          audioEl.autoplay = true
-          document.body.appendChild(audioEl)
-          audioElemsRef.current.push(audioEl)
-
-          participant.on(ParticipantEvent.IsSpeakingChanged, (speaking) => {
-            setAgentSpeaking(speaking)
-          })
+          const el = track.attach()
+          el.autoplay = true
+          document.body.appendChild(el)
+          audioElemsRef.current.push(el)
+          participant.on(ParticipantEvent.IsSpeakingChanged, speaking => setAgentSpeaking(speaking))
         }
       })
-
-      // capture agent transcripts
       room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
         segments.forEach(seg => {
           if (!seg.final) return
@@ -119,32 +88,21 @@ export default function App() {
           addMessage(isAgent ? 'agent' : 'user', seg.text)
         })
       })
-
-      // capture local user transcripts via DataReceived
       room.on(RoomEvent.DataReceived, (payload, participant) => {
         try {
-          const text = new TextDecoder().decode(payload)
-          const msg = JSON.parse(text)
+          const msg = JSON.parse(new TextDecoder().decode(payload))
           const content = msg?.text || msg?.transcript || ''
           if (!content) return
-          const isAgent = participant?.identity !== 'customer-1'
-          addMessage(isAgent ? 'agent' : 'user', content)
-        } catch {
-          // ignore
-        }
+          addMessage(participant?.identity !== 'customer-1' ? 'agent' : 'user', content)
+        } catch {}
       })
-
       const res = await fetch(`${import.meta.env.VITE_TOKEN_SERVER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' }
       })
       const { token, url } = await res.json()
-
       await room.connect(url, token)
-
       const mic = await createLocalAudioTrack()
       await room.localParticipant.publishTrack(mic)
-
     } catch (e) {
       console.error(e)
       resetUI()
@@ -158,250 +116,411 @@ export default function App() {
     if (room) await room.disconnect()
   }
 
+  const isIdle = status === 'idle'
+  const isConnecting = status === 'connecting'
+  const isConnected = status === 'connected'
+
   return (
-    <div style={styles.page}>
+    <div style={{
+      minHeight: '100vh',
+      background: DARK_BG,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px 16px',
+      boxSizing: 'border-box',
+      fontFamily: "'Cormorant Garamond', 'Georgia', serif",
+    }}>
       <style>{`
-        @keyframes wave {
-          0%, 100% { transform: scaleY(0.3); }
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Outfit:wght@300;400;500&display=swap');
+
+        .pfr-card {
+          background: ${CARD_BG};
+          border: 1px solid ${CARD_BORDER};
+          border-radius: 2px;
+          width: 100%;
+          max-width: 460px;
+          position: relative;
+          overflow: hidden;
+        }
+        .pfr-card::before {
+          content: '';
+          position: absolute;
+          top: 0; left: 0; right: 0;
+          height: 1px;
+          background: linear-gradient(90deg, transparent, ${GOLD}, transparent);
+        }
+        .pfr-corner {
+          position: absolute;
+          width: 18px; height: 18px;
+          border-color: ${GOLD};
+          border-style: solid;
+          border-width: 0;
+          opacity: 0.6;
+        }
+        .pfr-corner-tl { top: 12px; left: 12px; border-top-width: 1px; border-left-width: 1px; }
+        .pfr-corner-tr { top: 12px; right: 12px; border-top-width: 1px; border-right-width: 1px; }
+        .pfr-corner-bl { bottom: 12px; left: 12px; border-bottom-width: 1px; border-left-width: 1px; }
+        .pfr-corner-br { bottom: 12px; right: 12px; border-bottom-width: 1px; border-right-width: 1px; }
+
+        .pfr-divider {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 0 0 28px;
+        }
+        .pfr-divider-line {
+          flex: 1;
+          height: 1px;
+          background: linear-gradient(90deg, transparent, ${CARD_BORDER});
+        }
+        .pfr-divider-line.right {
+          background: linear-gradient(270deg, transparent, ${CARD_BORDER});
+        }
+        .pfr-divider-dot {
+          width: 4px; height: 4px;
+          background: ${GOLD};
+          transform: rotate(45deg);
+          opacity: 0.7;
+        }
+
+        @keyframes goldPulse {
+          0%, 100% { opacity: 0.5; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.15); }
+        }
+        @keyframes waveBar {
+          0%, 100% { transform: scaleY(0.2); }
           50% { transform: scaleY(1); }
         }
-        .bar {
-          width: 3px;
-          border-radius: 2px;
-          background: #1D9E75;
-          animation: wave 0.8s ease-in-out infinite;
-          transform-origin: bottom;
-        }
-        .bar:nth-child(1) { animation-delay: 0s; }
-        .bar:nth-child(2) { animation-delay: 0.12s; }
-        .bar:nth-child(3) { animation-delay: 0.24s; }
-        .bar:nth-child(4) { animation-delay: 0.36s; }
-        .bar:nth-child(5) { animation-delay: 0.48s; }
-        .bar-paused {
-          animation-play-state: paused;
-          transform: scaleY(0.3);
-        }
-        .bubble-in {
-          animation: bubbleIn 0.2s ease-out;
-        }
-        @keyframes bubbleIn {
-          from { opacity: 0; transform: translateY(6px); }
+        @keyframes fadeSlideUp {
+          from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% center; }
+          100% { background-position: 200% center; }
+        }
+
+        .wave-bar {
+          width: 2px;
+          border-radius: 2px;
+          background: ${GOLD};
+          transform-origin: center;
+          animation: waveBar 0.9s ease-in-out infinite;
+        }
+        .wave-bar.paused { animation-play-state: paused; transform: scaleY(0.2); }
+
+        .start-btn {
+          width: 100%;
+          padding: 14px 32px;
+          background: transparent;
+          border: 1px solid ${GOLD};
+          color: ${GOLD};
+          font-family: 'Outfit', sans-serif;
+          font-size: 13px;
+          font-weight: 400;
+          letter-spacing: 0.2em;
+          text-transform: uppercase;
+          cursor: pointer;
+          position: relative;
+          overflow: hidden;
+          transition: all 0.3s ease;
+        }
+        .start-btn::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(90deg, transparent, rgba(201,168,76,0.08), transparent);
+          background-size: 200% 100%;
+          animation: shimmer 2.5s ease-in-out infinite;
+        }
+        .start-btn:hover {
+          background: rgba(201,168,76,0.08);
+          color: ${GOLD_LIGHT};
+          border-color: ${GOLD_LIGHT};
+        }
+
+        .end-btn {
+          width: 100%;
+          padding: 12px 32px;
+          background: transparent;
+          border: 1px solid #3A1A1A;
+          color: #A05050;
+          font-family: 'Outfit', sans-serif;
+          font-size: 13px;
+          font-weight: 400;
+          letter-spacing: 0.2em;
+          text-transform: uppercase;
+          cursor: pointer;
+          transition: all 0.3s ease;
+          margin-top: 20px;
+        }
+        .end-btn:hover {
+          background: rgba(162,80,80,0.08);
+          color: #D07070;
+          border-color: #5A2A2A;
+        }
+
+        .transcript-box {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          max-height: 260px;
+          overflow-y: auto;
+          margin: 20px 0 0;
+          padding-right: 4px;
+        }
+        .transcript-box::-webkit-scrollbar { width: 2px; }
+        .transcript-box::-webkit-scrollbar-track { background: transparent; }
+        .transcript-box::-webkit-scrollbar-thumb { background: ${CARD_BORDER}; border-radius: 2px; }
+
+        .bubble {
+          max-width: 82%;
+          padding: 9px 13px;
+          font-family: 'Outfit', sans-serif;
+          font-size: 13px;
+          line-height: 1.55;
+          animation: fadeSlideUp 0.2s ease-out;
+          border-radius: 2px;
+        }
+        .bubble-agent {
+          align-self: flex-start;
+          background: ${SURFACE};
+          color: #C8C4BA;
+          border-left: 1px solid ${GOLD};
+        }
+        .bubble-user {
+          align-self: flex-end;
+          background: #1C1810;
+          color: #B8A878;
+          border-right: 1px solid rgba(201,168,76,0.3);
+        }
+        .bubble-label {
+          display: block;
+          font-size: 9px;
+          letter-spacing: 0.15em;
+          text-transform: uppercase;
+          margin-bottom: 4px;
+          opacity: 0.45;
+          color: ${GOLD};
+        }
+
+        .connecting-ring {
+          width: 20px; height: 20px;
+          border: 1.5px solid ${CARD_BORDER};
+          border-top-color: ${GOLD};
+          border-radius: 50%;
+          animation: spin 0.9s linear infinite;
+        }
+
+        .status-dot {
+          width: 6px; height: 6px;
+          border-radius: 50%;
+          flex-shrink: 0;
         }
       `}</style>
 
-      <div style={styles.card}>
-        <h2 style={styles.title}>Peppers Family Restaurant</h2>
-        <p style={styles.subtitle}>Voice Order System</p>
+      <div className="pfr-card">
+        <div className="pfr-corner pfr-corner-tl" />
+        <div className="pfr-corner pfr-corner-tr" />
+        <div className="pfr-corner pfr-corner-bl" />
+        <div className="pfr-corner pfr-corner-br" />
 
-        <div style={styles.statusRow}>
-          <div style={{ ...styles.dot, background: dotColor(status) }} />
-          <span style={styles.statusText}>{statusLabel(status)}</span>
-        </div>
+        <div style={{ padding: '44px 40px 40px' }}>
 
-        {status === 'idle' && (
-          <button style={styles.btn('#1D9E75')} onClick={startCall}>
-            Start Order
-          </button>
-        )}
+          {/* Header */}
+          <div style={{ textAlign: 'center', marginBottom: 32 }}>
+            <div style={{
+              fontSize: 10,
+              letterSpacing: '0.3em',
+              textTransform: 'uppercase',
+              color: GOLD,
+              fontFamily: "'Outfit', sans-serif",
+              fontWeight: 400,
+              marginBottom: 10,
+              opacity: 0.8,
+            }}>
+              Est. Tamilnadu
+            </div>
+            <h1 style={{
+              fontSize: 28,
+              fontWeight: 500,
+              color: '#F0EBE0',
+              margin: '0 0 6px',
+              letterSpacing: '0.03em',
+              lineHeight: 1.2,
+            }}>
+              Peppers Family
+            </h1>
+            <h1 style={{
+              fontSize: 28,
+              fontWeight: 300,
+              color: GOLD,
+              margin: '0 0 14px',
+              letterSpacing: '0.08em',
+              lineHeight: 1.2,
+              fontStyle: 'italic',
+            }}>
+              Restaurant
+            </h1>
 
-        {status === 'connecting' && (
-          <button style={styles.btn('#888')} disabled>
-            Connecting...
-          </button>
-        )}
-
-        {status === 'connected' && (
-          <>
-            {/* timer */}
-            <div style={styles.timerBox}>
-              <span style={styles.timerText}>{formatTime(callDuration)}</span>
+            <div className="pfr-divider">
+              <div className="pfr-divider-line" />
+              <div className="pfr-divider-dot" />
+              <div className="pfr-divider-line right" />
             </div>
 
-            {/* waveform */}
-            <div style={styles.waveformBox}>
-              <div style={styles.waveformInner}>
-                {[1,2,3,4,5].map(i => (
-                  <div
-                    key={i}
-                    className={`bar${agentSpeaking ? '' : ' bar-paused'}`}
-                    style={{ height: `${14 + i * 4}px` }}
-                  />
-                ))}
-              </div>
-              <span style={styles.speakingText}>
-                {agentSpeaking ? 'Priya is speaking...' : 'Listening...'}
-              </span>
+            <div style={{
+              fontSize: 11,
+              letterSpacing: '0.2em',
+              textTransform: 'uppercase',
+              color: '#666',
+              fontFamily: "'Outfit', sans-serif",
+              fontWeight: 300,
+            }}>
+              Voice Order System
             </div>
+          </div>
 
-            {/* transcript */}
-            {transcript.length > 0 && (
-              <div style={styles.transcriptBox}>
-                {transcript.map(msg => (
-                  <div
-                    key={msg.id}
-                    className="bubble-in"
-                    style={{
-                      ...styles.bubble,
-                      alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                      background: msg.role === 'user' ? '#1D9E75' : '#f0f0ee',
-                      color: msg.role === 'user' ? '#fff' : '#1a1a1a',
-                      borderBottomRightRadius: msg.role === 'user' ? 4 : 12,
-                      borderBottomLeftRadius: msg.role === 'agent' ? 4 : 12,
-                    }}
-                  >
-                    {msg.role === 'agent' && (
-                      <span style={styles.bubbleLabel}>Priya</span>
-                    )}
-                    {msg.text}
-                  </div>
-                ))}
-                <div ref={transcriptEndRef} />
-              </div>
+          {/* Status */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            marginBottom: 28,
+          }}>
+            {isConnecting ? (
+              <div className="connecting-ring" />
+            ) : (
+              <div className="status-dot" style={{
+                background: isConnected ? GOLD : '#333',
+                boxShadow: isConnected ? `0 0 6px ${GOLD}55` : 'none',
+                animation: isConnected ? 'goldPulse 2s ease-in-out infinite' : 'none',
+              }} />
             )}
+            <span style={{
+              fontSize: 11,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              color: isConnected ? '#A08848' : '#444',
+              fontFamily: "'Outfit', sans-serif",
+              fontWeight: 400,
+            }}>
+              {isConnected ? 'Connected' : isConnecting ? 'Connecting' : 'Not Connected'}
+            </span>
+          </div>
 
-            <button style={{ ...styles.btn('#E24B4A'), marginTop: 16 }} onClick={endCall}>
-              End Call
+          {/* Idle */}
+          {isIdle && (
+            <button className="start-btn" onClick={startCall}>
+              Begin Your Order
             </button>
-          </>
-        )}
+          )}
+
+          {/* Connecting */}
+          {isConnecting && (
+            <button className="start-btn" disabled style={{ opacity: 0.5, cursor: 'default' }}>
+              Connecting...
+            </button>
+          )}
+
+          {/* Connected */}
+          {isConnected && (
+            <>
+              {/* Timer */}
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <span style={{
+                  fontSize: 13,
+                  fontFamily: "'Outfit', sans-serif",
+                  fontWeight: 300,
+                  letterSpacing: '0.25em',
+                  color: '#555',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {formatTime(callDuration)}
+                </span>
+              </div>
+
+              {/* Waveform */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 12,
+                padding: '16px 20px',
+                background: SURFACE,
+                border: `1px solid ${CARD_BORDER}`,
+                borderTop: agentSpeaking ? `1px solid ${GOLD}44` : `1px solid ${CARD_BORDER}`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3, height: 28 }}>
+                  {[1,2,3,4,5,4,3,2,1].map((h, i) => (
+                    <div
+                      key={i}
+                      className={`wave-bar${agentSpeaking ? '' : ' paused'}`}
+                      style={{
+                        height: `${6 + h * 3}px`,
+                        animationDelay: `${i * 0.09}s`,
+                        opacity: agentSpeaking ? (0.4 + h * 0.07) : 0.2,
+                      }}
+                    />
+                  ))}
+                </div>
+                <span style={{
+                  fontSize: 11,
+                  letterSpacing: '0.15em',
+                  textTransform: 'uppercase',
+                  color: agentSpeaking ? '#A08848' : '#444',
+                  fontFamily: "'Outfit', sans-serif",
+                  fontWeight: 400,
+                  minWidth: 90,
+                }}>
+                  {agentSpeaking ? 'Priya speaking' : 'Listening...'}
+                </span>
+              </div>
+
+              {/* Transcript */}
+              {transcript.length > 0 && (
+                <div className="transcript-box">
+                  {transcript.map(msg => (
+                    <div
+                      key={msg.id}
+                      className={`bubble ${msg.role === 'agent' ? 'bubble-agent' : 'bubble-user'}`}
+                    >
+                      {msg.role === 'agent' && (
+                        <span className="bubble-label">Priya</span>
+                      )}
+                      {msg.text}
+                    </div>
+                  ))}
+                  <div ref={transcriptEndRef} />
+                </div>
+              )}
+
+              <button className="end-btn" onClick={endCall}>
+                End Call
+              </button>
+            </>
+          )}
+
+          {/* Footer */}
+          <div style={{
+            marginTop: 32,
+            textAlign: 'center',
+            fontSize: 10,
+            letterSpacing: '0.15em',
+            color: '#333',
+            fontFamily: "'Outfit', sans-serif",
+            textTransform: 'uppercase',
+          }}>
+            Powered by AI · Available 24/7
+          </div>
+
+        </div>
       </div>
     </div>
   )
-}
-
-function dotColor(s) {
-  if (s === 'connected') return '#1D9E75'
-  if (s === 'connecting') return '#EF9F27'
-  return '#B4B2A9'
-}
-
-function statusLabel(s) {
-  if (s === 'connected') return 'Connected'
-  if (s === 'connecting') return 'Connecting...'
-  return 'Not connected'
-}
-
-const styles = {
-  page: {
-    minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#f5f5f3',
-    padding: '24px 16px',
-    boxSizing: 'border-box',
-  },
-  card: {
-    background: '#fff',
-    borderRadius: 16,
-    padding: '40px 40px',
-    textAlign: 'center',
-    border: '1px solid #e8e8e6',
-    width: '100%',
-    maxWidth: 420,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'stretch',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 700,
-    margin: '0 0 4px',
-    color: '#1a1a1a',
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#888',
-    margin: '0 0 28px',
-  },
-  statusRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginBottom: 20,
-  },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    flexShrink: 0,
-  },
-  statusText: {
-    fontSize: 14,
-    color: '#5F5E5A',
-  },
-  timerBox: {
-    background: '#f5f5f3',
-    borderRadius: 8,
-    padding: '8px 16px',
-    marginBottom: 16,
-    display: 'inline-block',
-    alignSelf: 'center',
-  },
-  timerText: {
-    fontSize: 20,
-    fontWeight: 600,
-    color: '#1a1a1a',
-    fontVariantNumeric: 'tabular-nums',
-  },
-  waveformBox: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    padding: '10px 16px',
-    borderRadius: 8,
-    background: '#f9f9f8',
-    marginBottom: 16,
-  },
-  waveformInner: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 3,
-    height: 30,
-  },
-  speakingText: {
-    fontSize: 14,
-    color: '#5F5E5A',
-  },
-  transcriptBox: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    maxHeight: 280,
-    overflowY: 'auto',
-    padding: '12px 4px',
-    borderTop: '1px solid #e8e8e6',
-    borderBottom: '1px solid #e8e8e6',
-    marginBottom: 4,
-  },
-  bubble: {
-    maxWidth: '80%',
-    padding: '8px 12px',
-    borderRadius: 12,
-    fontSize: 14,
-    lineHeight: 1.45,
-    textAlign: 'left',
-  },
-  bubbleLabel: {
-    display: 'block',
-    fontSize: 11,
-    fontWeight: 600,
-    marginBottom: 3,
-    opacity: 0.6,
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-  },
-  btn: (bg) => ({
-    background: bg,
-    color: '#fff',
-    border: 'none',
-    padding: '12px 32px',
-    borderRadius: 8,
-    fontSize: 15,
-    cursor: 'pointer',
-    width: '100%',
-  }),
 }

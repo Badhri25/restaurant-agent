@@ -1,14 +1,20 @@
 import asyncio
+import sys
 import logging
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, room_io
 from livekit.agents import function_tool
-from livekit.plugins import noise_cancellation, silero
+from livekit.plugins import noise_cancellation
 from livekit.plugins import groq as lk_groq
 from livekit.plugins import assemblyai as lk_assemblyai
 from livekit.plugins import cartesia as lk_cartesia
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+# Fix for Windows + Python 3.12/3.13: livekit-agents IPC uses Unix-style pipes
+# which conflict with the default IocpProactor event loop on Windows.
+# Switching to SelectorEventLoop fixes WinError 87 and duplex_unix errors.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 load_dotenv()
 
@@ -83,14 +89,14 @@ server = AgentServer()
 
 @server.rtc_session()
 async def entrypoint(ctx: JobContext):
-    vad = silero.VAD.load()
-
     session = AgentSession(
-        stt=lk_assemblyai.STT(),
+        stt=lk_assemblyai.STT(
+            end_of_turn_confidence_threshold=0.7,  # 0.0-1.0; higher = waits for more confident end-of-turn signal
+        ),
         llm=lk_groq.LLM(model="llama-3.3-70b-versatile"),
         tts=lk_cartesia.TTS(),
-        vad=vad,
-        turn_detection=MultilingualModel(),
+        # No vad= (removed Silero — was 5-6x slower than realtime on CPU)
+        # No turn_detection= (removed MultilingualModel — was timing out)
     )
 
     await session.start(

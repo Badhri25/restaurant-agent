@@ -37,11 +37,29 @@ export default function App() {
     audioElemsRef.current = []
   }
 
+  function resetUI() {
+    cleanupAudio()
+    setStatus('idle')
+    setAgentSpeaking(false)
+    setCallDuration(0)
+    roomRef.current = null
+  }
+
   async function startCall() {
     setStatus('connecting')
     try {
       const room = new Room()
       roomRef.current = room
+
+      // set up ALL listeners BEFORE connecting
+      room.on(RoomEvent.Disconnected, () => {
+        console.log('[Room] Disconnected — resetting UI')
+        resetUI()
+      })
+
+      room.on(RoomEvent.Connected, () => {
+        setStatus('connected')
+      })
 
       room.on(RoomEvent.TrackSubscribed, (track, _, participant) => {
         if (track.kind === Track.Kind.Audio) {
@@ -54,20 +72,6 @@ export default function App() {
             setAgentSpeaking(speaking)
           })
         }
-      })
-
-      room.on(RoomEvent.Connected, () => {
-        setStatus('connected')
-      })
-
-      room.on(RoomEvent.Disconnected, () => {
-        console.log('[Room] Disconnected — resetting UI')
-        cleanupAudio()
-        roomRef.current = null
-        // Force state updates
-        setStatus('idle')
-        setAgentSpeaking(false)
-        setCallDuration(0)
       })
 
       const res = await fetch(`${import.meta.env.VITE_TOKEN_SERVER_URL}/token`, {
@@ -83,18 +87,14 @@ export default function App() {
 
     } catch (e) {
       console.error(e)
-      cleanupAudio()
-      setStatus('idle')
+      resetUI()
     }
   }
 
   async function endCall() {
     const room = roomRef.current
     roomRef.current = null
-    cleanupAudio()
-    setStatus('idle')
-    setAgentSpeaking(false)
-    setCallDuration(0)
+    resetUI()
     if (room) {
       await room.disconnect()
     }

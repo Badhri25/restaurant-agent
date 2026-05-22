@@ -52,10 +52,12 @@ export default function App() {
       roomRef.current = room
 
       // set up ALL listeners BEFORE connecting
-      room.on(RoomEvent.Disconnected, () => {
-        console.log('[Room] Disconnected — resetting UI')
-        resetUI()
-      })
+      room.on(RoomEvent.Disconnected, (reason) => {
+      console.log('[Room] Disconnected reason:', reason)
+      setTimeout(() => {
+      resetUI()
+  },  500)
+})
 
       room.on(RoomEvent.Connected, () => {
         setStatus('connected')

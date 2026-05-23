@@ -76,7 +76,7 @@ Fallback rules:
         Waits for speech to finish then disconnects the call cleanly.
         """
         logging.info("end_call triggered — waiting for TTS to finish")
-        await asyncio.sleep(12)
+        await asyncio.sleep(18)  # farewell message is ~10s of speech, 18s gives full buffer
         logging.info("disconnecting room now")
         try:
             await self._room.disconnect()
@@ -91,10 +91,13 @@ server = AgentServer()
 async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=lk_assemblyai.STT(
-            end_of_turn_confidence_threshold=0.7,  # 0.0-1.0; higher = waits for more confident end-of-turn signal
+            end_of_turn_confidence_threshold=0.5,  # fires sooner after you stop speaking
         ),
-        llm=lk_groq.LLM(model="llama-3.3-70b-versatile"),
-        tts=lk_cartesia.TTS(),
+        llm=lk_groq.LLM(model="llama-3.1-8b-instant"),  # fastest Groq model, low latency for short conversational replies
+        tts=lk_cartesia.TTS(
+            voice="79a125e8-cd45-4c13-8a67-188112f4dd22",  # Cartesia built-in "British Lady" — always available
+            model="sonic-2",                                # fastest Cartesia model
+        ),
         # No vad= (removed Silero — was 5-6x slower than realtime on CPU)
         # No turn_detection= (removed MultilingualModel — was timing out)
     )

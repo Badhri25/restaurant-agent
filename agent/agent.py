@@ -10,9 +10,6 @@ from livekit.plugins import groq as lk_groq
 from livekit.plugins import assemblyai as lk_assemblyai
 from livekit.plugins import cartesia as lk_cartesia
 
-# Fix for Windows + Python 3.12/3.13: livekit-agents IPC uses Unix-style pipes
-# which conflict with the default IocpProactor event loop on Windows.
-# Switching to SelectorEventLoop fixes WinError 87 and duplex_unix errors.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -28,8 +25,9 @@ MENU = """
 
 
 class RestaurantAgent(Agent):
-    def __init__(self, room):
+    def __init__(self, room, session):
         self._room = room
+        self._session = session
         super().__init__(
             instructions=f"""
 You are Priya, a warm and cheerful order-taker at Peppers Family Restaurant in Tamilnadu.
@@ -44,27 +42,26 @@ Your personality:
 - Never sound robotic or formal
 
 Your job:
-1. Greet the customer warmly by name of the restaurant
+1. Greet the customer warmly and mention Peppers Family Restaurant
 2. Tell them the menu if they ask
 3. Take their order carefully, confirm each item as they add it
-4. When they say they are done, read back the FULL order with quantities and total price ONCE
-5. Ask "Anything else I can help you with?" ONLY after reading back the full order
+4. When they say they are done, read back the FULL order with quantities and total price ONCE clearly
+5. Ask "Anything else I can help you with?" ONLY ONCE after reading back the full order — never repeat this question
 6. When the customer confirms nothing else is needed:
-   - Say out loud: "Thank you for ordering with Peppers Family Restaurant! Your order has been placed successfully. Please check your inbox for the order confirmation and tracking details. Have a great day! Goodbye!"
-   - Then call the end_call tool
-   - IMPORTANT: You must finish saying the entire farewell message before calling end_call
+   - Say exactly: "Thank you for ordering with Peppers Family Restaurant! Your order has been placed successfully. Please check your inbox for the order confirmation and tracking details. Have a great day! Goodbye!"
+   - Then immediately call the end_call tool
 
-IMPORTANT — avoid repetition:
-- Do NOT repeat the full order summary or total price after every side question
+IMPORTANT rules to avoid repetition:
+- Do NOT repeat the full order summary or total price more than once
+- Do NOT ask "Anything else?" more than once per call — ask it only after the final order recap
 - Side questions (payment method, delivery time, etc.) get a short direct answer only
-- Only give the full order recap once: when the customer confirms they are done ordering
+- Never ask "Anything else?" in the middle of taking an order
 
 Fallback rules:
 - If someone asks for something NOT on the menu, say "Sorry, we don't have that today" and suggest the closest item
-- If asked about delivery time, payment methods, address, or anything not on this menu, say "I'm not sure about that, but our staff will assist you when your order arrives"
-- If the customer is frustrated, repeats the same complaint twice, or explicitly asks to speak to a human or manager, say "I understand, let me connect you with our team right away" then call the end_call tool
+- If asked about delivery time, payment methods, address, say "I'm not sure about that, but our staff will assist you when your order arrives"
+- If the customer is frustrated or asks to speak to a human, say "I understand, let me connect you with our team right away" then call end_call
 - If you didn't understand something, say "Sorry, could you say that again?" — never guess
-- If someone is rude, stay calm and polite
 - Never make up prices or items not on the menu
 """,
         )
@@ -72,11 +69,15 @@ Fallback rules:
     @function_tool()
     async def end_call(self):
         """
-        Call this tool after you have fully spoken the farewell message.
-        Waits for speech to finish then disconnects the call cleanly.
+        Call this tool immediately after finishing the farewell message.
+        Waits for all pending TTS audio to finish then disconnects cleanly.
         """
-        logging.info("end_call triggered — waiting for TTS to finish")
-        await asyncio.sleep(18)  # farewell message is ~10s of speech, 18s gives full buffer
+        logging.info("end_call triggered — waiting for TTS to drain")
+        try:
+            # Wait for TTS playback to finish using session audio drain
+            await self._session.drain()
+        except Exception:
+            await asyncio.sleep(10)
         logging.info("disconnecting room now")
         try:
             await self._room.disconnect()
@@ -91,19 +92,17 @@ server = AgentServer()
 async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=lk_assemblyai.STT(
-            end_of_turn_confidence_threshold=0.5,  # fires sooner after you stop speaking
+            end_of_turn_confidence_threshold=0.5,
         ),
-        llm=lk_groq.LLM(model="llama-3.1-8b-instant"),  # fastest Groq model, low latency for short conversational replies
+        llm=lk_groq.LLM(model="llama-3.3-70b-versatile"),
         tts=lk_cartesia.TTS(
-            voice="79a125e8-cd45-4c13-8a67-188112f4dd22",  # Cartesia built-in "British Lady" — always available
-            model="sonic-2",                                # fastest Cartesia model
+            voice="a0e99841-438c-4a64-b679-ae501e7d6091",
+            model="sonic-2",
         ),
-        # No vad= (removed Silero — was 5-6x slower than realtime on CPU)
-        # No turn_detection= (removed MultilingualModel — was timing out)
     )
 
     await session.start(
-        agent=RestaurantAgent(room=ctx.room),
+        agent=RestaurantAgent(room=ctx.room, session=session),
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(

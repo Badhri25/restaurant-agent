@@ -75,11 +75,20 @@ export default function App() {
   const [orderItems, setOrderItems] = useState([])
   const [summaryItems, setSummaryItems] = useState([])
   const [summaryDuration, setSummaryDuration] = useState(0)
+  // ── CHANGE 1: error state ──
+  const [error, setError] = useState(null)
   const roomRef = useRef(null)
   const audioElemsRef = useRef([])
   const transcriptEndRef = useRef(null)
   const canvasRef = useRef(null)
   const animRef = useRef(null)
+  // ── CHANGE 1: refs that always hold current values ──
+  const callDurationRef = useRef(0)
+  const transcriptRef = useRef([])
+
+  // keep refs in sync
+  useEffect(() => { callDurationRef.current = callDuration }, [callDuration])
+  useEffect(() => { transcriptRef.current = transcript }, [transcript])
 
   // Background canvas
   useEffect(() => {
@@ -144,9 +153,11 @@ export default function App() {
 
   function handleDisconnect(){
     cleanupAudio()
-    const items = parseOrderFromTranscript(transcript)
+    // ── CHANGE 1: read from refs so values are always current ──
+    const dur = callDurationRef.current
+    const items = parseOrderFromTranscript(transcriptRef.current)
     setSummaryItems(items)
-    setSummaryDuration(callDuration)
+    setSummaryDuration(dur)
     playChime('disconnect')
     setStatus('summary')
     setAgentSpeaking(false)
@@ -159,10 +170,22 @@ export default function App() {
     }, 6000)
   }
 
+  // ── CHANGE 2: resetToIdle for "Place New Order" button ──
+  function resetToIdle() {
+    setStatus('idle')
+    setTranscript([])
+    setShowTranscript(false)
+    setOrderItems([])
+    setSummaryItems([])
+    setCallDuration(0)
+    setError(null)
+  }
+
   function resetUI(){
     cleanupAudio(); setStatus('idle'); setAgentSpeaking(false)
     setCallDuration(0); setTranscript([]); setShowTranscript(false)
     setMenuOpen(false); setOrderItems([]); setSummaryItems([])
+    setError(null)
     roomRef.current=null
   }
 
@@ -177,7 +200,17 @@ export default function App() {
 
   async function startCall(){
     setStatus('connecting'); setTranscript([]); setMenuOpen(false); setOrderItems([])
+    setError(null)
     try{
+      // ── CHANGE 6: timeout on fetch ──
+      const res = await fetch(`${import.meta.env.VITE_TOKEN_SERVER_URL}/token`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) throw new Error('Token server returned error')
+      const {token, url} = await res.json()
+
       const room=new Room({reconnectPolicy:{nextRetryDelayInMs:()=>null}})
       roomRef.current=room
       room.on(RoomEvent.Disconnected,()=>setTimeout(()=>handleDisconnect(),300))
@@ -195,11 +228,22 @@ export default function App() {
       room.on(RoomEvent.DataReceived,(payload,participant)=>{
         try{ const msg=JSON.parse(new TextDecoder().decode(payload)); const c=msg?.text||msg?.transcript||''; if(c) addMessage(participant?.identity!=='customer-1'?'agent':'user',c) }catch{}
       })
-      const res=await fetch(`${import.meta.env.VITE_TOKEN_SERVER_URL}/token`,{method:'POST',headers:{'Content-Type':'application/json'}})
-      const {token,url}=await res.json()
       await room.connect(url,token)
       await room.localParticipant.publishTrack(await createLocalAudioTrack())
-    }catch(e){ console.error(e); resetUI() }
+    }catch(e){
+      console.error(e)
+      cleanupAudio()
+      roomRef.current = null
+      // ── CHANGE 5: show error banner ──
+      if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+        setError('Could not reach server. Please check your connection and try again.')
+      } else if (e.message?.includes('Token server')) {
+        setError('Server error. Please try again in a moment.')
+      } else {
+        setError('Connection failed. Please try again.')
+      }
+      setStatus('idle')
+    }
   }
 
   async function endCall(){
@@ -359,10 +403,31 @@ export default function App() {
         @keyframes avatarPulse{0%,100%{box-shadow:0 0 20px rgba(80,140,255,0.2);}50%{box-shadow:0 0 36px rgba(80,140,255,0.45);}}
 
         /* CONNECTED TITLE */
-        .connected-title{display:flex;align-items:center;gap:14px;margin-bottom:16px;animation:fadeUp 0.6s ease;}
+        .connected-title{display:flex;align-items:center;gap:14px;margin-bottom:16px;animation:fadeUp 0.6s ease;flex-wrap:wrap;justify-content:center;}
         .connected-title h2{font-family:'DM Serif Display',serif;font-size:clamp(18px,2.2vw,24px);color:rgba(255,255,255,0.72);letter-spacing:0.06em;font-weight:400;}
         .connected-title h2 em{font-style:italic;color:#7EB3FF;}
         @keyframes fadeUp{from{opacity:0;transform:translateY(-10px);}to{opacity:1;transform:translateY(0);}}
+
+        /* ── CHANGE 3: speaking indicator ── */
+        .speaking-indicator{
+          display:flex;align-items:center;gap:6px;
+          width:100%;justify-content:center;margin-top:4px;
+          animation:fadeUp 0.3s ease;
+        }
+        .speaking-dot{
+          width:5px;height:5px;border-radius:50%;
+          background:rgba(126,179,255,0.85);
+          display:inline-block;
+          animation:speakBounce 0.6s ease-in-out infinite;
+        }
+        @keyframes speakBounce{
+          0%,100%{transform:translateY(0);opacity:0.4;}
+          50%{transform:translateY(-4px);opacity:1;}
+        }
+        .speaking-label{
+          font-size:10px;letter-spacing:0.18em;text-transform:uppercase;
+          font-weight:300;color:rgba(126,179,255,0.65);
+        }
 
         /* LIVE ORDER TRACKER */
         .order-tracker{
@@ -439,6 +504,44 @@ export default function App() {
         @keyframes drainBar{from{width:100%;}to{width:0%;}}
         .summary-empty{font-size:13px;font-weight:300;color:rgba(255,255,255,0.25);text-align:center;margin-bottom:20px;}
 
+        /* ── CHANGE 2: new order button ── */
+        .new-order-btn{
+          margin-top:20px;
+          padding:12px 36px;
+          background:rgba(126,179,255,0.08);
+          border:1px solid rgba(126,179,255,0.25);
+          border-radius:30px;
+          color:rgba(126,179,255,0.75);
+          font-family:'DM Sans',sans-serif;
+          font-size:10px;letter-spacing:0.28em;text-transform:uppercase;font-weight:300;
+          cursor:pointer;transition:all 0.25s ease;
+        }
+        .new-order-btn:hover{
+          background:rgba(126,179,255,0.16);
+          border-color:rgba(126,179,255,0.5);
+          color:rgba(126,179,255,1);
+        }
+
+        /* ── CHANGE 5: error banner ── */
+        .error-banner{
+          position:fixed;top:72px;left:50%;transform:translateX(-50%);
+          background:rgba(180,40,40,0.88);
+          border:1px solid rgba(255,100,100,0.25);
+          color:rgba(255,220,220,0.95);
+          padding:10px 18px;border-radius:6px;
+          font-size:11px;letter-spacing:0.06em;font-weight:300;
+          display:flex;align-items:center;gap:12px;
+          z-index:100;backdrop-filter:blur(10px);
+          animation:fadeUp 0.3s ease;
+          white-space:nowrap;
+        }
+        .error-dismiss{
+          background:none;border:none;cursor:pointer;
+          color:rgba(255,200,200,0.6);font-size:14px;padding:0;line-height:1;
+          transition:color 0.2s;
+        }
+        .error-dismiss:hover{color:rgba(255,200,200,1);}
+
         /* BOTTOM PANEL */
         .bottom-panel{width:100%;max-width:400px;display:flex;flex-direction:column;align-items:center;gap:12px;}
         .status-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 16px;border-radius:20px;border:1px solid rgba(126,179,255,0.1);background:rgba(126,179,255,0.04);margin-top:8px;}
@@ -476,6 +579,7 @@ export default function App() {
           .ring-ticks{width:280px!important;height:280px!important;}
           .center-orb{width:160px!important;height:160px!important;}
           .main.shifted{transform:translateX(0);}
+          .error-banner{white-space:normal;max-width:90vw;text-align:center;}
         }
       `}</style>
 
@@ -492,6 +596,14 @@ export default function App() {
         </div>
         <div className="nav-line"/>
       </nav>
+
+      {/* ── CHANGE 5: error banner ── */}
+      {error && (
+        <div className="error-banner">
+          <span>⚠ {error}</span>
+          <button className="error-dismiss" onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
 
       {/* Menu drawer */}
       <div className={`menu-overlay ${menuOpen?'open':''}`}>
@@ -577,6 +689,10 @@ export default function App() {
             )}
             <p className="summary-duration">Call duration · {formatTime(summaryDuration)}</p>
             <div className="summary-bar"><div className="summary-bar-fill"/></div>
+            {/* ── CHANGE 2: Place New Order button ── */}
+            <button className="new-order-btn" onClick={resetToIdle}>
+              Place New Order
+            </button>
           </div>
         )}
 
@@ -593,6 +709,15 @@ export default function App() {
           <div className="connected-title">
             <div className={`priya-avatar ${agentSpeaking?'speaking':''}`}>P</div>
             <h2>Speaking with <em>Priya</em></h2>
+            {/* ── CHANGE 3: speaking indicator ── */}
+            {agentSpeaking && (
+              <div className="speaking-indicator">
+                <span className="speaking-dot" style={{animationDelay:'0s'}}/>
+                <span className="speaking-dot" style={{animationDelay:'0.2s'}}/>
+                <span className="speaking-dot" style={{animationDelay:'0.4s'}}/>
+                <span className="speaking-label">Priya is speaking...</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -611,7 +736,18 @@ export default function App() {
                 )
               })}
             </div>
-            <div className={`ring-glow ${agentSpeaking?'speaking':''}`}/>
+            {/* ── CHANGE 4: orb glow brighter when speaking ── */}
+            <div className={`ring-glow ${agentSpeaking?'speaking':''}`}
+              style={agentSpeaking ? {
+                opacity:1,
+                background:'radial-gradient(circle,rgba(100,160,255,0.45) 0%,rgba(60,100,200,0.12) 60%,transparent 100%)',
+                transform:'scale(1.12)',
+                transition:'all 0.4s ease',
+              } : {
+                opacity:0.4,
+                transition:'all 0.4s ease',
+              }}
+            />
 
             {isIdle && (
               <div className="center-orb" onClick={startCall}>
@@ -636,7 +772,16 @@ export default function App() {
 
             {isConnected && (
               <div className={`center-orb ${agentSpeaking?'speaking':''}`} style={{cursor:'default'}}>
-                <div className="orb-bg"/><div className="orb-shine"/>
+                {/* ── CHANGE 4: orb color changes when speaking ── */}
+                <div className="orb-bg" style={agentSpeaking ? {
+                  background:'radial-gradient(circle at 40% 35%,rgba(120,170,255,0.55) 0%,rgba(50,100,210,0.8) 45%,rgba(12,28,90,0.96) 100%)',
+                  borderColor:'rgba(126,179,255,0.75)',
+                  boxShadow:'0 0 60px rgba(80,140,255,0.3),inset 0 0 40px rgba(80,140,255,0.12)',
+                  transition:'all 0.4s ease',
+                } : {
+                  transition:'all 0.4s ease',
+                }}/>
+                <div className="orb-shine"/>
                 <div className="orb-content">
                   <div className="orb-bars">
                     {[1,2,4,7,10,13,10,7,4,2,1].map((h,i)=>(
@@ -645,7 +790,7 @@ export default function App() {
                     ))}
                   </div>
                   <p className="orb-timer">{formatTime(callDuration)}</p>
-                  <p className="orb-status" style={{color:agentSpeaking?'rgba(126,179,255,0.9)':'rgba(255,255,255,0.28)'}}>
+                  <p className="orb-status" style={{color:agentSpeaking?'rgba(126,179,255,0.9)':'rgba(255,255,255,0.28)',transition:'color 0.4s ease'}}>
                     {agentSpeaking?'Priya speaking':'Listening'}
                   </p>
                 </div>
